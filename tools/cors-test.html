@@ -46,7 +46,9 @@
 
   <div class="row">
     <button type="button" class="primary" id="send">ส่ง POST ด้วย fetch</button>
+    <button type="button" id="send-simple">ส่งแบบไม่มี preflight (text/plain)</button>
   </div>
+  <p class="note" style="margin-top:8px">แบบไม่มี preflight: ส่ง Content-Type: text/plain และไม่ส่ง Authorization เพื่อให้ browser ไม่ส่ง OPTIONS ก่อน ใช้ได้เมื่อ server รับ body แบบ text/plain และตอบ Access-Control-Allow-Origin มากับ POST</p>
 
   <pre id="result">ยังไม่ได้ส่ง</pre>
 
@@ -81,12 +83,18 @@
         (mixed ? `<br><span class="bad">หน้าเป็น https แต่ URL เป็น http</span> → browser บล็อก (mixed content)` : "");
     }
 
-    async function send() {
+    // simple = true sends a "simple" CORS request (text/plain, no Authorization), which the browser sends without an OPTIONS preflight.
+    async function send(simple) {
       describe();
-      const headers = { "Content-Type": "application/json" };
-      if ($("auth").value.trim()) headers.Authorization = $("auth").value.trim();
-      $("send").disabled = true;
-      result.textContent = "กำลังส่ง...";
+      const auth = $("auth").value.trim();
+      const headers = { "Content-Type": simple ? "text/plain" : "application/json" };
+      if (auth && !simple) headers.Authorization = auth;
+      const buttons = [$("send"), $("send-simple")];
+      buttons.forEach(button => { button.disabled = true; });
+      const label = simple
+        ? "แบบไม่มี preflight (Content-Type: text/plain" + (auth ? ", ข้าม Authorization เพราะ header นี้บังคับให้มี OPTIONS" : "") + ")"
+        : "แบบปกติ (Content-Type: application/json" + (auth ? " + Authorization" : "") + ")";
+      result.textContent = `กำลังส่ง${label}...`;
       const started = performance.now();
       try {
         const response = await fetch($("url").value, { method: "POST", headers, body: $("body").value });
@@ -94,21 +102,30 @@
         const ms = Math.round(performance.now() - started);
         let pretty = text;
         try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch {}
-        result.textContent = `HTTP ${response.status} ${response.statusText} · ${ms} ms\n\n${pretty}`;
+        let advice = "";
+        if (simple && response.ok) advice = "\n\n✅ ใช้ได้: server ตอบ Access-Control-Allow-Origin มากับ POST และรับ body แบบ text/plain → แอปส่งแบบนี้ได้";
+        else if (simple && [400, 415, 422].includes(response.status)) advice = "\n\n⚠️ ผ่าน CORS แล้ว แต่ server ไม่รับ body แบบ text/plain → วิธีนี้ใช้ไม่ได้ ต้องใช้ proxy";
+        else if (simple && [401, 403].includes(response.status)) advice = "\n\n⚠️ ผ่าน CORS แล้ว แต่ server ต้องการ Authorization ซึ่งส่งแบบไม่มี preflight ไม่ได้ → ต้องใช้ proxy";
+        result.textContent = `${label}\nHTTP ${response.status} ${response.statusText} · ${ms} ms\n\n${pretty}${advice}`;
       } catch (error) {
         result.textContent =
-          `ล้มเหลว: ${error.name}: ${error.message}\n\n` +
+          `${label}\nล้มเหลว: ${error.name}: ${error.message}\n\n` +
+          (simple
+            ? "ไม่มี OPTIONS แล้ว แต่ browser ยังอ่านผลไม่ได้ = response ของ POST ไม่มี Access-Control-Allow-Origin\n" +
+              "(หรือต่อ server ไม่ได้เลย) → วิธีไม่มี preflight ใช้ไม่ได้กับ server นี้ ต้องใช้ proxy หรือให้ผู้ดูแลเปิด CORS\n\n"
+            : "") +
           "fetch ไม่บอกเหตุผลให้ JavaScript รู้ ดูเหตุผลจริงที่ F12 → Console (ข้อความสีแดง)\n" +
-          "และ F12 → Network: ดู request OPTIONS ว่าได้ status อะไร และมี Access-Control-Allow-Origin ไหม\n\n" +
+          "และ F12 → Network: ดู request ที่ fail ว่าได้ status อะไร และมี Access-Control-Allow-Origin ไหม\n\n" +
           "ถ้า Postman ใช้ได้ แต่หน้านี้ไม่ได้ = ติด CORS ที่ server (ไม่ใช่โค้ด)";
       } finally {
-        $("send").disabled = false;
+        buttons.forEach(button => { button.disabled = false; });
       }
     }
 
     document.querySelectorAll("[data-preset]").forEach(button => button.addEventListener("click", () => applyPreset(button.dataset.preset)));
     $("url").addEventListener("input", describe);
-    $("send").addEventListener("click", send);
+    $("send").addEventListener("click", () => send(false));
+    $("send-simple").addEventListener("click", () => send(true));
     applyPreset("proxy-ollama");
   </script>
 </body>
