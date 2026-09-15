@@ -12,11 +12,11 @@ This is a React 19 single-page app built with Vite (not Next.js).
 - `data/` holds fixtures, terminology, and interface translations in `messages.js`.
 - `utils/` contains clipboard, storage, and class-name helpers; `public/` is for static assets.
 - `tests/` contains service and browser checks. History, terminology, settings, and refinement actions (`TranslationActions`) remain available but are not rendered on the main page; the app uses `defaultSettings` from `hooks/useSettings.js`.
-- `dist/` is the generated production build (includes `web.config` for IIS hosting); do not edit it by hand.
+- `dist/` is the generated production build; do not edit it by hand. Its `web.config` is generated from `iis/web.config` by `scripts/webConfig.js` during the build.
 
 ## AI Configuration
 
-AI settings come from `VITE_AI_PROVIDER` (`mock`, `ollama`, `openai`), `VITE_AI_API_URL`, `VITE_AI_MODEL`, `VITE_AI_API_KEY`, `VITE_AI_TIMEOUT_MS`, `VITE_AI_TEMPERATURE` (default 0.2), and `VITE_AI_SEED` (optional integer) in `.env.local` (ignored by git; template in `.env.example`). `VITE_` values are compiled into the bundle and visible in the browser, so never treat them as secret. `.env.mock` forces the mock for tests.
+AI settings come from `VITE_AI_PROVIDER` (`mock`, `ollama`, `openai`), `VITE_AI_API_URL`, `VITE_AI_MODEL`, `VITE_AI_API_KEY`, `VITE_AI_TIMEOUT_MS`, `VITE_AI_TEMPERATURE` (default 0.2), and `VITE_AI_SEED` (optional integer) in `.env.local` (ignored by git; template in `.env.example`). `VITE_` values are compiled into the bundle and visible in the browser, so never treat them as secret. `.env.mock` forces the mock for tests. For HTTPS deployments set `VITE_AI_API_URL=./ai` and `AI_PROXY_TARGET` (not exposed to the browser): the build adds an IIS URL Rewrite + ARR proxy rule to `dist/web.config`, and the dev/preview servers proxy `/ai` the same way.
 
 ## Build, Test, and Development Commands
 

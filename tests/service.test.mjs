@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { buildWebConfig, normalizeProxyTarget } from "../scripts/webConfig.js";
 import { translateText, transformText } from "../services/translatorService.js";
 import { mockTranslations } from "../data/mockTranslations.js";
 import { cleanOutput, hasUnexpectedScript, missingTerms, parseAiConfig } from "../services/aiClient.js";
@@ -71,6 +73,20 @@ test("AI config parsing", () => {
  const outOfRange = parseAiConfig({ VITE_AI_TEMPERATURE: "3", VITE_AI_SEED: "" });
  assert.equal(outOfRange.temperature, 0.2);
  assert.equal(outOfRange.seed, undefined);
+});
+test("IIS web.config proxy rule", () => {
+ const template = readFileSync(new URL("../iis/web.config", import.meta.url), "utf8");
+ const plain = buildWebConfig(template);
+ assert.ok(!plain.includes("AI_PROXY_RULE") && !plain.includes("<rewrite>"));
+ assert.ok(plain.includes('<add value="index.html" />'));
+ const proxied = buildWebConfig(template, { target: "https://ai.company.local/v1/" });
+ assert.ok(proxied.includes('<match url="^ai/(.*)" />'));
+ assert.ok(proxied.includes('<action type="Rewrite" url="https://ai.company.local/v1/{R:1}" />'));
+ assert.ok(!proxied.includes("HTTP_ORIGIN"));
+ assert.ok(buildWebConfig(template, { target: "http://10.0.0.5:11434", clearOrigin: true }).includes('<set name="HTTP_ORIGIN" value="" />'));
+ assert.ok(buildWebConfig(template, { target: "https://ai.local/a&b" }).includes("https://ai.local/a&amp;b/{R:1}"));
+ assert.equal(normalizeProxyTarget("  "), "");
+ assert.throws(() => normalizeProxyTarget("ai.company.local"), /http/);
 });
 test("validation and simulated server errors", async () => {
  await assert.rejects(translateText({ text: " " }), /required/);
