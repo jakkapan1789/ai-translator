@@ -33,10 +33,23 @@ function load_settings(): array
         'model' => $value('AI_MODEL', 'model', ''),
         'api_key' => $value('AI_API_KEY', 'api_key', ''),
         'timeout' => $value('AI_TIMEOUT', 'timeout', 60),
+        'ca_file' => $value('AI_CA_FILE', 'ca_file', ''),
     ];
 }
 
-function request(string $method, string $url, array $headers, ?string $body, int $timeout): array
+// Same trust rules as chat.php: ca_file first, otherwise the Windows certificate store on Windows (PHP 8.2+).
+function tls_options(string $caFile): array
+{
+    if ($caFile !== '') {
+        return [CURLOPT_CAINFO => $caFile];
+    }
+    if (PHP_OS_FAMILY === 'Windows' && defined('CURLSSLOPT_NATIVE_CA')) {
+        return [CURLOPT_SSL_OPTIONS => CURLSSLOPT_NATIVE_CA];
+    }
+    return [];
+}
+
+function request(string $method, string $url, array $headers, ?string $body, int $timeout, string $caFile): array
 {
     if (!function_exists('curl_init')) {
         return ['status' => 0, 'error' => 'curl extension is not enabled', 'errno' => -1, 'ms' => 0, 'body' => ''];
@@ -48,7 +61,7 @@ function request(string $method, string $url, array $headers, ?string $body, int
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_CONNECTTIMEOUT => 10,
         CURLOPT_TIMEOUT => $timeout,
-    ]);
+    ] + tls_options($caFile));
     if ($body !== null) {
         curl_setopt($handle, CURLOPT_POSTFIELDS, $body);
     }
@@ -70,7 +83,12 @@ function advice(array $result): string
     $errno = $result['errno'];
     $status = $result['status'];
     if ($errno === -1) return 'Enable extension=curl in php.ini and restart the IIS application pool.';
-    if (in_array($errno, [60, 77, 35], true)) return 'HTTPS certificate problem: set curl.cainfo and openssl.cafile in php.ini to a CA bundle (cacert.pem) that also contains your company CA, then restart the application pool.';
+    if (in_array($errno, [60, 77, 35], true)) return "HTTPS certificate not trusted. Internal servers usually use a company CA or a self-signed certificate:\n"
+        . str_repeat(' ', 28) . "- export that CA (or the self-signed certificate) as Base-64 .cer from the browser, put it in this api folder, and set 'ca_file' in config.php;\n"
+        . str_repeat(' ', 28) . "- or use PHP 8.2+ on Windows, which trusts the Windows certificate store automatically;\n"
+        . str_repeat(' ', 28) . "- or, if policy allows, use http:// in base_url on the internal network.\n"
+        . str_repeat(' ', 28) . "Use the host name from the certificate in base_url, not an IP address.";
+    if ($errno === 51) return 'Certificate host name mismatch: use the host name the certificate was issued for in base_url (not an IP address).';
     if ($errno === 6) return 'Host name not found: check base_url, and that this server resolves the AI host name (DNS).';
     if ($errno === 7) return 'Connection refused or blocked: check the port, firewall, and that the AI server listens on an address this server can reach (Ollama: OLLAMA_HOST=0.0.0.0).';
     if ($errno === 28) return 'Timed out: firewall dropping packets, an outbound proxy is required, or the AI server is too slow.';
@@ -92,13 +110,18 @@ $baseUrl = rtrim((string) $baseUrl, '/');
 [$apiKey, $keySource] = $settings['api_key'];
 [$timeout] = $settings['timeout'];
 $timeout = max(5, (int) $timeout);
+[$caFile, $caSource] = $settings['ca_file'];
+$caFile = trim((string) $caFile);
+if ($caFile !== '' && !preg_match('#^([a-zA-Z]:[\\\\/]|[\\\\/])#', $caFile)) {
+    $caFile = __DIR__ . DIRECTORY_SEPARATOR . $caFile;
+}
 
 echo "== PHP\n";
-line('PHP version', PHP_VERSION . ' (' . PHP_SAPI . ')');
+line('PHP version', PHP_VERSION . ' (' . PHP_SAPI . ', ' . PHP_OS_FAMILY . ')');
 line('curl extension', function_exists('curl_init') ? 'enabled (' . (curl_version()['version'] ?? '?') . ', ' . (curl_version()['ssl_version'] ?? 'no SSL') . ')' : 'MISSING');
 line('openssl extension', extension_loaded('openssl') ? 'enabled' : 'MISSING');
-line('curl.cainfo', ini_get('curl.cainfo') ?: '(not set)');
-line('openssl.cafile', ini_get('openssl.cafile') ?: '(not set)');
+line('curl.cainfo (php.ini)', ini_get('curl.cainfo') ?: '(not set)');
+line('openssl.cafile (php.ini)', ini_get('openssl.cafile') ?: '(not set)');
 line('max_execution_time', (string) ini_get('max_execution_time'));
 
 echo "\n== Settings\n";
@@ -108,6 +131,18 @@ line('base_url', ($baseUrl !== '' ? $baseUrl : '(empty)') . "  [$baseSource]");
 line('model', ($model !== '' ? (string) $model : '(empty)') . "  [$modelSource]");
 line('api_key', ($apiKey !== '' ? 'set, ' . strlen((string) $apiKey) . ' characters' : 'not set') . "  [$keySource]");
 line('timeout', $timeout . ' s');
+
+echo "\n== HTTPS trust\n";
+if (str_starts_with(strtolower($baseUrl), 'http://')) {
+    line('certificate check', 'not used (base_url is http://)');
+} elseif ($caFile !== '') {
+    line('trusted CAs', "ca_file $caFile  [$caSource]");
+    line('ca_file exists', is_file($caFile) ? 'yes' : 'NO  <- chat.php answers "AI backend is not configured" until this file exists');
+} elseif (PHP_OS_FAMILY === 'Windows' && defined('CURLSSLOPT_NATIVE_CA')) {
+    line('trusted CAs', 'Windows certificate store (same as browsers)');
+} else {
+    line('trusted CAs', ini_get('curl.cainfo') ? 'php.ini curl.cainfo' : 'curl default bundle' . (PHP_OS_FAMILY === 'Windows' ? ' (often none on Windows: set ca_file or use PHP 8.2+)' : ''));
+}
 
 if ($baseUrl === '' || $model === '') {
     echo "\nbase_url and model are required. Fix the settings above and reload this page.\n";
@@ -130,7 +165,7 @@ $checks[] = $provider === 'ollama'
 foreach ($checks as [$label, $method, $url, $body]) {
     echo "\n== $label\n";
     line('request', "$method $url");
-    $result = request($method, $url, $body === null ? $headers : array_merge($headers, ['Content-Type: application/json']), $body, $timeout);
+    $result = request($method, $url, $body === null ? $headers : array_merge($headers, ['Content-Type: application/json']), $body, $timeout, is_file($caFile) ? $caFile : '');
     line('HTTP status', $result['status'] ? (string) $result['status'] : '(no response)');
     line('curl error', $result['errno'] ? "#{$result['errno']} {$result['error']}" : 'none');
     line('time', $result['ms'] . ' ms');

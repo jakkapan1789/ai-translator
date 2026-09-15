@@ -93,11 +93,19 @@ This is the default. Every build includes a small backend at api/chat.php. The b
 
     https://your-site/api/chat.php  →  PHP (server)  →  AI server
 
-1. On the IIS server, install PHP with FastCGI (for example with the PHP Manager for IIS) and enable the curl and openssl extensions in php.ini. If the AI server uses HTTPS, point curl.cainfo and openssl.cafile in php.ini to a CA bundle (cacert.pem, plus your company CA if it issues the AI server's certificate).
+1. On the IIS server, install PHP with FastCGI (for example with the PHP Manager for IIS) and enable the curl and openssl extensions in php.ini.
 2. Run npm run build (no .env needed) and copy the contents of dist/ to the site.
 3. Open https://your-site/api/chat.php in a browser. {"error":"Method not allowed"} means PHP is running; a download or PHP source means .php is not mapped to PHP in IIS.
 4. On the server, copy api/config.example.php to api/config.php and set provider (ollama or openai), base_url, model, and api_key. Environment variables AI_PROVIDER, AI_BASE_URL, AI_MODEL, AI_API_KEY, AI_TIMEOUT, and AI_ALLOWED_ORIGINS override the file. web.config blocks downloading config.php, and git ignores public/api/config.php.
 5. Check that the IIS server itself can reach base_url (curl or Postman on that machine), then translate in the app.
+
+**HTTPS to an internal AI server.** PHP does not use the browser's trusted certificates, so an AI server with a company CA or self-signed certificate fails with "SSL certificate problem" even when Postman works. Choose one:
+
+- Windows with PHP 8.2 or later: nothing to do; chat.php trusts the Windows certificate store, like browsers.
+- Otherwise: export the company root CA (or the AI server's self-signed certificate) from the browser as Base-64 .cer, put it in the api folder, and set 'ca_file' => 'company-root-ca.cer' in api/config.php.
+- If the internal network policy allows it, use an http:// base_url. Only PHP calls the AI server, so the HTTPS site is not affected.
+
+Always use the host name the certificate was issued for in base_url, not an IP address. To troubleshoot, copy tools/diagnose.php next to chat.php, open it in a browser, and delete it afterwards: it shows the PHP extensions, effective settings (without the key), which CAs are trusted, and the exact curl error for the AI server.
 
 api/chat.php accepts only POST with up to four system/user messages, always uses the model from its config, and returns { content } or { error } using the same error messages as the app. When copying a new build, keep the existing api/config.php on the server.
 

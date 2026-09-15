@@ -18,6 +18,12 @@ return [
     // Seconds to wait for the AI server.
     'timeout' => 60,
 
+    // HTTPS with an internal/company CA or a self-signed certificate:
+    // put the CA certificate (Base-64 .pem or .cer) in this api folder and name it here, e.g. 'company-root-ca.pem'.
+    // Leave empty on Windows with PHP 8.2+ to trust the Windows certificate store, like browsers do.
+    // Not needed when base_url uses http:// on the internal network.
+    'ca_file' => '',
+
     // Only needed when a page on another domain calls this file, e.g. ['https://translator.company.com'].
     'allowed_origins' => [],
 ];

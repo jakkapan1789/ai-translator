@@ -35,7 +35,13 @@ function load_config(): array
     if (is_string($origins)) {
         $origins = array_values(array_filter(array_map('trim', explode(',', $origins))));
     }
+    // A relative ca_file is looked up next to this script, e.g. 'company-root-ca.pem'.
+    $caFile = trim((string) $value('AI_CA_FILE', 'ca_file', ''));
+    if ($caFile !== '' && !preg_match('#^([a-zA-Z]:[\\\\/]|[\\\\/])#', $caFile)) {
+        $caFile = __DIR__ . DIRECTORY_SEPARATOR . $caFile;
+    }
     return [
+        'ca_file' => $caFile,
         'provider' => strtolower((string) $value('AI_PROVIDER', 'provider', 'ollama')),
         'base_url' => rtrim((string) $value('AI_BASE_URL', 'base_url', ''), '/'),
         'model' => (string) $value('AI_MODEL', 'model', ''),
@@ -45,7 +51,20 @@ function load_config(): array
     ];
 }
 
-function post_json(string $url, array $headers, string $body, int $timeout): array
+// Internal AI servers usually use a company CA that PHP does not know. ca_file trusts a specific PEM file;
+// otherwise on Windows (PHP 8.2+) curl trusts the Windows certificate store, the same CAs browsers use.
+function tls_options(string $caFile): array
+{
+    if ($caFile !== '') {
+        return [CURLOPT_CAINFO => $caFile];
+    }
+    if (PHP_OS_FAMILY === 'Windows' && defined('CURLSSLOPT_NATIVE_CA')) {
+        return [CURLOPT_SSL_OPTIONS => CURLSSLOPT_NATIVE_CA];
+    }
+    return [];
+}
+
+function post_json(string $url, array $headers, string $body, int $timeout, string $caFile = ''): array
 {
     if (function_exists('curl_init')) {
         $handle = curl_init($url);
@@ -56,7 +75,7 @@ function post_json(string $url, array $headers, string $body, int $timeout): arr
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_CONNECTTIMEOUT => 10,
             CURLOPT_TIMEOUT => $timeout,
-        ]);
+        ] + tls_options($caFile));
         $response = curl_exec($handle);
         $status = (int) curl_getinfo($handle, CURLINFO_HTTP_CODE);
         $timedOut = curl_errno($handle) === 28;
@@ -73,7 +92,7 @@ function post_json(string $url, array $headers, string $body, int $timeout): arr
         'content' => $body,
         'timeout' => $timeout,
         'ignore_errors' => true,
-    ]]);
+    ], 'ssl' => $caFile !== '' ? ['cafile' => $caFile] : []]);
     $started = microtime(true);
     $response = @file_get_contents($url, false, $context);
     $lines = function_exists('http_get_last_response_headers') ? (http_get_last_response_headers() ?? []) : ($http_response_header ?? []);
@@ -111,6 +130,9 @@ if ($method !== 'POST') {
     respond(405, ['error' => 'Method not allowed']);
 }
 if ($config['base_url'] === '' || $config['model'] === '' || !in_array($config['provider'], ['ollama', 'openai'], true)) {
+    respond(500, ['error' => 'AI backend is not configured']);
+}
+if ($config['ca_file'] !== '' && !is_file($config['ca_file'])) {
     respond(500, ['error' => 'AI backend is not configured']);
 }
 
@@ -159,7 +181,7 @@ if ($config['api_key'] !== '') {
     $headers[] = 'Authorization: Bearer ' . $config['api_key'];
 }
 
-$result = post_json($url, $headers, json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $config['timeout']);
+$result = post_json($url, $headers, json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $config['timeout'], $config['ca_file']);
 $status = $result['status'];
 if ($status === 0) {
     respond($result['timeout'] ? 504 : 502, ['error' => $result['timeout'] ? 'AI server timed out' : 'Unable to connect to AI server']);
