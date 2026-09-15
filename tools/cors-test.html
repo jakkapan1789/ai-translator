@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI CORS Test</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; color: #1f2937; background: #f8fafc; }
+    body { max-width: 860px; margin: 0 auto; padding: 24px 16px 48px; }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    p.note { margin: 0 0 20px; color: #64748b; font-size: 14px; }
+    label { display: block; font-size: 13px; font-weight: 600; margin: 14px 0 6px; }
+    input, textarea { width: 100%; box-sizing: border-box; font: 14px ui-monospace, monospace; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; }
+    textarea { min-height: 160px; resize: vertical; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+    button { font: inherit; font-size: 14px; padding: 9px 14px; border-radius: 8px; border: 1px solid #cbd5e1; background: #fff; cursor: pointer; }
+    button.primary { background: #7fa33c; border-color: #7fa33c; color: #fff; font-weight: 600; }
+    button:disabled { opacity: .5; cursor: wait; }
+    .info { margin-top: 16px; padding: 12px; border-radius: 8px; background: #eef2f7; font-size: 14px; line-height: 1.6; }
+    pre { white-space: pre-wrap; word-break: break-word; margin: 16px 0 0; padding: 14px; border-radius: 8px; background: #0f172a; color: #e2e8f0; font-size: 13px; min-height: 60px; }
+    .ok { color: #4d7c0f; font-weight: 600; }
+    .bad { color: #b91c1c; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>AI CORS Test</h1>
+  <p class="note">ส่ง POST แบบเดียวกับ Postman แต่ส่งจาก browser เพื่อดูว่าติด CORS หรือไม่ · Sends the same POST as Postman, from the browser.</p>
+
+  <div class="row">
+    <button type="button" data-preset="proxy-ollama">ผ่าน proxy ./ai (Ollama)</button>
+    <button type="button" data-preset="proxy-openai">ผ่าน proxy ./ai (OpenAI-compatible)</button>
+    <button type="button" data-preset="direct-ollama">Ollama ตรง</button>
+    <button type="button" data-preset="direct-openai">OpenAI-compatible ตรง</button>
+  </div>
+
+  <label for="url">URL (POST)</label>
+  <input id="url" value="./ai/api/chat" />
+
+  <label for="auth">Authorization header (ถ้ามี / optional)</label>
+  <input id="auth" placeholder="Bearer sk-..." />
+
+  <label for="body">Body (JSON)</label>
+  <textarea id="body"></textarea>
+
+  <div class="info" id="info"></div>
+
+  <div class="row">
+    <button type="button" class="primary" id="send">ส่ง POST ด้วย fetch</button>
+  </div>
+
+  <pre id="result">ยังไม่ได้ส่ง</pre>
+
+  <script>
+    const presets = {
+      "proxy-ollama": { url: "./ai/api/chat", body: { model: "qwen2.5:7b", stream: false, messages: [{ role: "user", content: "Translate to English: เครื่องจักรมีปัญหา" }] } },
+      "proxy-openai": { url: "./ai/chat/completions", body: { model: "gpt-4o-mini", messages: [{ role: "user", content: "Translate to English: เครื่องจักรมีปัญหา" }] } },
+      "direct-ollama": { url: "https://ai-server.example.com/api/chat", body: { model: "qwen2.5:7b", stream: false, messages: [{ role: "user", content: "Translate to English: เครื่องจักรมีปัญหา" }] } },
+      "direct-openai": { url: "https://ai-server.example.com/v1/chat/completions", body: { model: "gpt-4o-mini", messages: [{ role: "user", content: "Translate to English: เครื่องจักรมีปัญหา" }] } },
+    };
+    const $ = id => document.getElementById(id);
+    const result = $("result");
+
+    function applyPreset(name) {
+      $("url").value = presets[name].url;
+      $("body").value = JSON.stringify(presets[name].body, null, 2);
+      describe();
+    }
+
+    // Explains whether the browser will send an OPTIONS preflight before the POST.
+    function describe() {
+      let target;
+      try { target = new URL($("url").value, location.href); } catch { $("info").textContent = "URL ไม่ถูกต้อง"; return; }
+      const sameOrigin = target.origin === location.origin;
+      const mixed = location.protocol === "https:" && target.protocol === "http:";
+      $("info").innerHTML =
+        `หน้านี้: <b>${location.origin}</b><br>` +
+        `เรียกไปที่: <b>${target.href}</b><br>` +
+        (sameOrigin
+          ? `<span class="ok">โดเมนเดียวกัน</span> → browser ไม่ส่ง OPTIONS และไม่ตรวจ CORS`
+          : `<span class="bad">ข้ามโดเมน</span> → browser จะส่ง <b>OPTIONS</b> ก่อน และ server ต้องตอบ Access-Control-Allow-Origin: ${location.origin}`) +
+        (mixed ? `<br><span class="bad">หน้าเป็น https แต่ URL เป็น http</span> → browser บล็อก (mixed content)` : "");
+    }
+
+    async function send() {
+      describe();
+      const headers = { "Content-Type": "application/json" };
+      if ($("auth").value.trim()) headers.Authorization = $("auth").value.trim();
+      $("send").disabled = true;
+      result.textContent = "กำลังส่ง...";
+      const started = performance.now();
+      try {
+        const response = await fetch($("url").value, { method: "POST", headers, body: $("body").value });
+        const text = await response.text();
+        const ms = Math.round(performance.now() - started);
+        let pretty = text;
+        try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch {}
+        result.textContent = `HTTP ${response.status} ${response.statusText} · ${ms} ms\n\n${pretty}`;
+      } catch (error) {
+        result.textContent =
+          `ล้มเหลว: ${error.name}: ${error.message}\n\n` +
+          "fetch ไม่บอกเหตุผลให้ JavaScript รู้ ดูเหตุผลจริงที่ F12 → Console (ข้อความสีแดง)\n" +
+          "และ F12 → Network: ดู request OPTIONS ว่าได้ status อะไร และมี Access-Control-Allow-Origin ไหม\n\n" +
+          "ถ้า Postman ใช้ได้ แต่หน้านี้ไม่ได้ = ติด CORS ที่ server (ไม่ใช่โค้ด)";
+      } finally {
+        $("send").disabled = false;
+      }
+    }
+
+    document.querySelectorAll("[data-preset]").forEach(button => button.addEventListener("click", () => applyPreset(button.dataset.preset)));
+    $("url").addEventListener("input", describe);
+    $("send").addEventListener("click", send);
+    applyPreset("proxy-ollama");
+  </script>
+</body>
+</html>
