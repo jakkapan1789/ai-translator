@@ -1,0 +1,2 @@
+import * as SwitchPrimitive from "@radix-ui/react-switch";
+export function Switch(props) { return <SwitchPrimitive.Root className="inline-flex h-6 w-11 shrink-0 items-center rounded-full bg-slate-200 transition-colors data-[state=checked]:bg-brand-500" {...props}><SwitchPrimitive.Thumb className="block size-5 rounded-full bg-white shadow transition-transform translate-x-0.5 data-[state=checked]:translate-x-5" /></SwitchPrimitive.Root>; }

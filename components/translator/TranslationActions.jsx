@@ -1,0 +1,5 @@
+import { useLanguage } from "@/components/i18n/LanguageProvider";
+import { Copy, Sparkles, BriefcaseBusiness, Minimize2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { copyText } from "@/utils/clipboard";
+export default function TranslationActions({ result, loading, transform, englishOutput = true }) { const { t } = useLanguage(); const englishActions = englishOutput ? [{ label: "Improve English", icon: Sparkles, action: () => transform("improve") }, { label: "Make Formal", icon: BriefcaseBusiness, action: () => transform("formal") }, { label: "Make Shorter", icon: Minimize2, action: () => transform("shorter") }] : []; return <div className="flex flex-wrap items-center gap-2"><span className="mr-1 text-xs text-slate-500">{t("Refine your result")}</span>{[{ label: "Copy", icon: Copy, action: () => copyText(result.translatedText, t) }, ...englishActions].map(item => <Button key={t(item.label)} variant="outline" size="sm" disabled={!result || loading} onClick={item.action}><item.icon />{t(item.label)}</Button>)}</div>; }
