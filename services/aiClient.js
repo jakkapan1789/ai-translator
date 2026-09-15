@@ -8,10 +8,10 @@ export function parseAiConfig(env = {}) {
   const temperature = readNumber(env.VITE_AI_TEMPERATURE);
   const seed = readNumber(env.VITE_AI_SEED);
   const provider = (env.VITE_AI_PROVIDER || "backend").toLowerCase();
-  // Without VITE_AI_API_URL the backend tries PHP first, then the ASP.NET handler.
+  // Without VITE_AI_API_URL the backend tries the ASP.NET handler first, then PHP.
   const apiUrls = env.VITE_AI_API_URL
     ? [env.VITE_AI_API_URL.replace(/\/+$/, "")]
-    : provider === "backend" ? ["./api/chat.php", "./api/chat.ashx"] : [];
+    : provider === "backend" ? ["./api/chat.ashx", "./api/chat.php"] : [];
   return {
     provider,
     apiUrl: apiUrls[0] || "",
@@ -127,16 +127,25 @@ export function hasUnexpectedScript(output, targetLanguage, source = "") {
   return false;
 }
 
-// The backend file that answered last (chat.php or chat.ashx), so later requests skip the failed one.
+// The backend file that answered last (chat.ashx or chat.php), so later requests skip the failed one.
 let backendUrl = null;
 
-// Tries each backend file in order. 404/405 means that file or its handler is not installed on this server.
+// A backend is unavailable when the file or its handler is not installed (404/405), or when it runs but has
+// no settings (500 "AI backend is not configured"), e.g. ASP.NET is enabled but only PHP is configured.
+async function isUnavailable(response) {
+  if (response.status === 404 || response.status === 405) return true;
+  if (response.status !== 500 || typeof response.clone !== "function") return false;
+  const data = await response.clone().json().catch(() => null);
+  return data?.error === "AI backend is not configured";
+}
+
+// Tries each backend file in order and returns the first one that is available.
 export async function postToBackend(request, urls = aiConfig.apiUrls, fetchImpl = fetch) {
   const candidates = backendUrl && urls.includes(backendUrl) ? [backendUrl] : urls;
   let response;
   for (const [index, url] of candidates.entries()) {
     response = await fetchImpl(url, request);
-    const missing = response.status === 404 || response.status === 405;
+    const missing = await isUnavailable(response);
     if (!missing) {
       backendUrl = url;
       return response;

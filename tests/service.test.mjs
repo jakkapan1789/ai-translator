@@ -59,8 +59,8 @@ test("AI output cleanup", () => {
 test("AI config parsing", () => {
  const defaults = parseAiConfig({});
  assert.equal(defaults.provider, "backend");
- assert.equal(defaults.apiUrl, "./api/chat.php");
- assert.deepEqual(defaults.apiUrls, ["./api/chat.php", "./api/chat.ashx"]);
+ assert.equal(defaults.apiUrl, "./api/chat.ashx");
+ assert.deepEqual(defaults.apiUrls, ["./api/chat.ashx", "./api/chat.php"]);
  assert.deepEqual(parseAiConfig({ VITE_AI_API_URL: "./api/chat.ashx/" }).apiUrls, ["./api/chat.ashx"]);
  assert.equal(defaults.temperature, 0.2);
  assert.equal(defaults.seed, undefined);
@@ -82,24 +82,32 @@ test("AI config parsing", () => {
  assert.equal(isLiveAi(parseAiConfig({ VITE_AI_PROVIDER: "mock" })), false);
  assert.equal(parseAiConfig({ VITE_AI_PROVIDER: "ollama" }).apiUrl, "");
 });
-test("backend falls back from chat.php to chat.ashx", async () => {
- const urls = ["./api/chat.php", "./api/chat.ashx"];
+test("backend tries chat.ashx first and falls back to chat.php", async () => {
+ const fake = (status, error) => ({ status, ok: status >= 200 && status < 300, clone: () => ({ json: async () => (error ? { error } : {}) }) });
+ const urls = ["./api/chat.ashx", "./api/chat.php"];
  const calls = [];
- const fakeFetch = status => async url => { calls.push(url); return { status: url === "./api/chat.ashx" ? 200 : status, ok: url === "./api/chat.ashx" }; };
- const first = await postToBackend({}, urls, fakeFetch(404));
+ const first = await postToBackend({}, urls, async url => { calls.push(url); return url.endsWith(".php") ? fake(200) : fake(404); });
  assert.equal(first.status, 200);
- assert.deepEqual(calls, ["./api/chat.php", "./api/chat.ashx"]);
+ assert.deepEqual(calls, ["./api/chat.ashx", "./api/chat.php"], "no ASP.NET handler: falls back to PHP");
  calls.length = 0;
- await postToBackend({}, urls, fakeFetch(404));
- assert.deepEqual(calls, ["./api/chat.ashx"], "remembers the working backend");
+ await postToBackend({}, urls, async url => { calls.push(url); return url.endsWith(".php") ? fake(200) : fake(404); });
+ assert.deepEqual(calls, ["./api/chat.php"], "remembers the working backend");
  calls.length = 0;
- const serverError = await postToBackend({}, ["./x.php", "./x.ashx"], async url => { calls.push(url); return { status: 500, ok: false }; });
+ const notConfigured = await postToBackend({}, ["./a.ashx", "./a.php"], async url => { calls.push(url); return url.endsWith(".php") ? fake(200) : fake(500, "AI backend is not configured"); });
+ assert.equal(notConfigured.status, 200);
+ assert.deepEqual(calls, ["./a.ashx", "./a.php"], "ASP.NET runs without chat.config.json: falls back to PHP");
+ calls.length = 0;
+ const realError = await postToBackend({}, ["./b.ashx", "./b.php"], async url => { calls.push(url); return fake(502, "Unable to connect to AI server"); });
+ assert.equal(realError.status, 502);
+ assert.deepEqual(calls, ["./b.ashx"], "a real AI error from the first backend is returned, not skipped");
+ calls.length = 0;
+ const serverError = await postToBackend({}, ["./c.ashx", "./c.php"], async url => { calls.push(url); return fake(500, "Unexpected response from AI server"); });
  assert.equal(serverError.status, 500);
- assert.deepEqual(calls, ["./x.php"], "a real error from the first backend is returned, not skipped");
+ assert.deepEqual(calls, ["./c.ashx"], "other 500 errors are returned, not skipped");
  calls.length = 0;
- const missing = await postToBackend({}, ["./y.php", "./y.ashx"], async url => { calls.push(url); return { status: url.endsWith(".php") ? 404 : 405, ok: false }; });
- assert.equal(missing.status, 405);
- assert.deepEqual(calls, ["./y.php", "./y.ashx"]);
+ const allMissing = await postToBackend({}, ["./d.ashx", "./d.php"], async url => { calls.push(url); return url.endsWith(".php") ? fake(500, "AI backend is not configured") : fake(404); });
+ assert.equal(allMissing.status, 500);
+ assert.deepEqual(calls, ["./d.ashx", "./d.php"], "neither configured: last answer is returned");
 });
 test("IIS web.config proxy rule", () => {
  const template = readFileSync(new URL("../iis/web.config", import.meta.url), "utf8");

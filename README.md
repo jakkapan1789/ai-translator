@@ -1,6 +1,6 @@
 # AI Translator
 
-An anonymous internal Thai/English translation tool built with React, Vite, JavaScript, Tailwind CSS, Radix-based UI components, Lucide, and Sonner. There is no login or Node.js server in the deployed application. The browser sends translation requests to a small PHP backend (api/chat.php) on the same site, and the AI server, model, and API key are configured on the server in api/config.php (see AI configuration).
+An anonymous internal Thai/English translation tool built with React, Vite, JavaScript, Tailwind CSS, Radix-based UI components, Lucide, and Sonner. There is no login or Node.js server in the deployed application. The browser sends translation requests to a small backend on the same site (api/chat.ashx for ASP.NET, or api/chat.php for PHP), and the AI server, model, and API key are configured on the server in api/chat.config.json or api/config.php (see AI configuration).
 
 ## Local development
 
@@ -26,8 +26,8 @@ The build creates **dist/** containing HTML, JavaScript, CSS, fonts, and an IIS 
 
 1. Run npm install and npm run build on your development or build machine. No .env file is needed.
 2. Copy the **contents** of dist/ into the IIS site's physical directory, or a virtual directory such as translator.
-3. On the server, copy api/config.example.php to **api/config.php** and set the AI server (see PHP backend). Keep this file when copying later builds.
-4. Ensure IIS **Static Content** and **Default Document** features are enabled, PHP runs through FastCGI, and the site allows anonymous access.
+3. On the server, create the backend settings: **api/chat.config.json** from chat.config.example.json (ASP.NET), or **api/config.php** from config.example.php (PHP). Keep this file when copying later builds.
+4. Ensure IIS **Static Content** and **Default Document** features are enabled, ASP.NET 4.x (or PHP through FastCGI) is enabled, and the site allows anonymous access.
 5. Browse to the site URL or https://your-internal-host/translator/.
 
 dist/web.config is generated from iis/web.config: it selects index.html as the default document, supplies font MIME types, and adds the AI proxy rule when AI_PROXY_TARGET is set (see AI reverse proxy on IIS). If server policy locks these settings, ask the IIS administrator to configure them at the server/site level instead.
@@ -36,20 +36,20 @@ No Node.js runtime or ASP.NET hosting bundle is required. URL Rewrite and ARR ar
 
 Use HTTPS on the internal site for browser clipboard features. On plain HTTP outside localhost, browsers may block automatic copy/paste; users can still select text and use keyboard shortcuts.
 
-Kanit fonts are bundled and served by IIS. The app does not fetch Google Fonts. The browser only calls api/chat.php on the same site; PHP contacts the AI server.
+Kanit fonts are bundled and served by IIS. The app does not fetch Google Fonts. The browser only calls api/chat.ashx or api/chat.php on the same site; the server contacts the AI server.
 
 References: [Vite static deployment](https://vite.dev/guide/static-deploy), [IIS static websites](https://learn.microsoft.com/en-us/iis/manage/creating-websites/scenario-build-a-static-website-on-iis).
 
 ## AI configuration
 
-**Production needs no .env file.** By default the app posts to ./api/chat.php, and the AI server, model, and API key are set on the server in api/config.php (see PHP backend below).
+**Production needs no .env file.** By default the app posts to ./api/chat.ashx and falls back to ./api/chat.php, and the AI server, model, and API key are set on the server in api/chat.config.json or api/config.php (see the ASP.NET and PHP backend sections below).
 
 The Vite variables below are optional overrides read by services/aiClient.js, mainly for local development. Put them in **.env.development.local** (read by npm run dev only, so npm run build is not affected). A .env.local or .env.production.local file would also change npm run build, so avoid those unless you mean to.
 
 | Variable | Purpose |
 | --- | --- |
 | VITE_AI_PROVIDER | backend (default: the PHP endpoint), mock, ollama, or openai for any OpenAI-compatible /chat/completions API |
-| VITE_AI_API_URL | Default ./api/chat.php for backend. For direct calls, for example http://localhost:11434 (Ollama) or https://api.openai.com/v1 |
+| VITE_AI_API_URL | Default for backend: ./api/chat.ashx, then ./api/chat.php. Set one URL to use only that file. For direct calls, for example http://localhost:11434 (Ollama) or https://api.openai.com/v1 |
 | VITE_AI_MODEL | Model name, for example qwen2.5-coder:7b |
 | VITE_AI_API_KEY | Optional; sent as Authorization: Bearer when set |
 | VITE_AI_TIMEOUT_MS | Request timeout in milliseconds, default 60000 |
@@ -89,7 +89,7 @@ Without a proxy, the browser calls VITE_AI_API_URL directly: use an HTTPS addres
 
 ### PHP backend (api/chat.php)
 
-This is the default. Every build includes a small backend at api/chat.php. The browser posts to it on the same site (no CORS), and PHP calls the AI server with the model and API key kept on the server.
+Every build includes a small PHP backend at api/chat.php. The app uses it when api/chat.ashx is not available (see the ASP.NET backend below). The browser posts to it on the same site (no CORS), and PHP calls the AI server with the model and API key kept on the server.
 
     https://your-site/api/chat.php  →  PHP (server)  →  AI server
 
@@ -109,13 +109,13 @@ Always use the host name the certificate was issued for in base_url, not an IP a
 
 ### ASP.NET backend (api/chat.ashx)
 
-For IIS servers without PHP, or when PHP cannot trust the internal CA, every build also includes api/chat.ashx. It has the same request and response contract as chat.php, and .NET uses the Windows certificate store and system proxy automatically, so internal company CAs need no extra settings.
+This is the default: every build includes api/chat.ashx, and the app calls it first. It has the same request and response contract as chat.php, and .NET uses the Windows certificate store and system proxy automatically, so internal company CAs need no extra settings.
 
 1. Enable the IIS feature ASP.NET 4.x (Server Manager → Web Server → Application Development → ASP.NET 4.x). No other install is needed; the handler is compiled by IIS on first request.
 2. Copy api/chat.config.example.json to **api/chat.config.json** and set provider, base_url, model, and api_key. AI_* environment variables override the file. web.config blocks downloading chat.config.json, and git ignores it.
 3. Open https://your-site/api/chat.ashx in a browser: {"error":"Method not allowed"} means ASP.NET is running.
 
-The app needs no rebuild: without VITE_AI_API_URL it posts to api/chat.php, and if that returns 404 or 405 (no PHP handler, or the file was removed) it uses api/chat.ashx and remembers it. To use chat.ashx on a server that also runs PHP, delete api/chat.php there.
+The app needs no rebuild. Without VITE_AI_API_URL it posts to api/chat.ashx first. If that answers 404 or 405 (ASP.NET not enabled, or the file was removed), or 500 "AI backend is not configured" (ASP.NET runs but chat.config.json is missing), it uses api/chat.php and remembers the working file until the page is reloaded. Any other error, such as an unreachable AI server, is shown as is, so configure only one backend on a server.
 
 api/chat.php accepts only POST with up to four system/user messages, always uses the model from its config, and returns { content } or { error } using the same error messages as the app. When copying a new build, keep the existing api/config.php on the server.
 
@@ -146,7 +146,7 @@ Run npx vite build --mode mock before test:static. It serves dist/ through a pla
 - utils/: safe localStorage, clipboard, and class merging.
 - iis/web.config: IIS configuration template; scripts/webConfig.js writes dist/web.config and adds the optional AI proxy rule.
 - public/api/chat.php: PHP backend used by default, copied into dist/api/; public/api/config.example.php documents its settings.
-- public/api/chat.ashx: ASP.NET alternative with the same contract, configured by api/chat.config.json (see chat.config.example.json); the app falls back to it when chat.php returns 404/405.
+- public/api/chat.ashx: ASP.NET alternative with the same contract, configured by api/chat.config.json (see chat.config.example.json); the app calls it first and falls back to chat.php when it is unavailable.
 - tests/: service, browser, localization, layout, and static deployment checks.
 
 ## Interface and mock behavior
