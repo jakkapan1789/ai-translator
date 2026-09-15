@@ -52,6 +52,7 @@ const thai = {
   "AI model or endpoint not found": "ไม่พบโมเดลหรือที่อยู่ของเซิร์ฟเวอร์ AI",
   "AI server rejected the API key": "เซิร์ฟเวอร์ AI ปฏิเสธ API key",
   "AI server is busy. Try again shortly.": "เซิร์ฟเวอร์ AI มีผู้ใช้งานมาก กรุณาลองใหม่อีกครั้ง",
+  "AI backend is not configured": "ยังไม่ได้ตั้งค่า AI บนเซิร์ฟเวอร์", "Request is too large": "คำขอมีขนาดใหญ่เกินไป",
   "Clipboard unavailable. Select the translation to copy it.": "ไม่สามารถใช้คลิปบอร์ดได้ กรุณาเลือกข้อความเพื่อคัดลอก",
   "An unexpected error occurred": "เกิดข้อผิดพลาดที่ไม่คาดคิด"
 };

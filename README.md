@@ -1,6 +1,6 @@
 # AI Translator
 
-An anonymous internal Thai/English translation tool built with React, Vite, JavaScript, Tailwind CSS, Radix-based UI components, Lucide, and Sonner. There is no login or Node.js server in the deployed application. Translations use a mock service unless an AI provider is configured (see AI configuration).
+An anonymous internal Thai/English translation tool built with React, Vite, JavaScript, Tailwind CSS, Radix-based UI components, Lucide, and Sonner. There is no login or Node.js server in the deployed application. The browser sends translation requests to a small PHP backend (api/chat.php) on the same site, and the AI server, model, and API key are configured on the server in api/config.php (see AI configuration).
 
 ## Local development
 
@@ -24,10 +24,11 @@ The build creates **dist/** containing HTML, JavaScript, CSS, fonts, and an IIS 
 
 ## Deploy to IIS
 
-1. Run npm install and npm run build on your development or build machine.
+1. Run npm install and npm run build on your development or build machine. No .env file is needed.
 2. Copy the **contents** of dist/ into the IIS site's physical directory, or a virtual directory such as translator.
-3. Ensure IIS **Static Content** and **Default Document** features are enabled and the site allows anonymous access.
-4. Browse to the site URL or https://your-internal-host/translator/.
+3. On the server, copy api/config.example.php to **api/config.php** and set the AI server (see PHP backend). Keep this file when copying later builds.
+4. Ensure IIS **Static Content** and **Default Document** features are enabled, PHP runs through FastCGI, and the site allows anonymous access.
+5. Browse to the site URL or https://your-internal-host/translator/.
 
 dist/web.config is generated from iis/web.config: it selects index.html as the default document, supplies font MIME types, and adds the AI proxy rule when AI_PROXY_TARGET is set (see AI reverse proxy on IIS). If server policy locks these settings, ask the IIS administrator to configure them at the server/site level instead.
 
@@ -35,18 +36,20 @@ No Node.js runtime or ASP.NET hosting bundle is required. URL Rewrite and ARR ar
 
 Use HTTPS on the internal site for browser clipboard features. On plain HTTP outside localhost, browsers may block automatic copy/paste; users can still select text and use keyboard shortcuts.
 
-Kanit fonts are bundled and served by IIS. The app does not fetch Google Fonts. It contacts an AI service only when one is configured.
+Kanit fonts are bundled and served by IIS. The app does not fetch Google Fonts. The browser only calls api/chat.php on the same site; PHP contacts the AI server.
 
 References: [Vite static deployment](https://vite.dev/guide/static-deploy), [IIS static websites](https://learn.microsoft.com/en-us/iis/manage/creating-websites/scenario-build-a-static-website-on-iis).
 
 ## AI configuration
 
-AI settings are Vite environment variables read by services/aiClient.js. Copy .env.example to **.env.local** (used by npm run dev and npm run build) or **.env.production.local** (build only, takes priority) and fill in the values.
+**Production needs no .env file.** By default the app posts to ./api/chat.php, and the AI server, model, and API key are set on the server in api/config.php (see PHP backend below).
+
+The Vite variables below are optional overrides read by services/aiClient.js, mainly for local development. Put them in **.env.development.local** (read by npm run dev only, so npm run build is not affected). A .env.local or .env.production.local file would also change npm run build, so avoid those unless you mean to.
 
 | Variable | Purpose |
 | --- | --- |
-| VITE_AI_PROVIDER | mock (default), ollama, or openai for any OpenAI-compatible /chat/completions API |
-| VITE_AI_API_URL | For example http://localhost:11434 (Ollama) or https://api.openai.com/v1 |
+| VITE_AI_PROVIDER | backend (default: the PHP endpoint), mock, ollama, or openai for any OpenAI-compatible /chat/completions API |
+| VITE_AI_API_URL | Default ./api/chat.php for backend. For direct calls, for example http://localhost:11434 (Ollama) or https://api.openai.com/v1 |
 | VITE_AI_MODEL | Model name, for example qwen2.5-coder:7b |
 | VITE_AI_API_KEY | Optional; sent as Authorization: Bearer when set |
 | VITE_AI_TIMEOUT_MS | Request timeout in milliseconds, default 60000 |
@@ -84,6 +87,20 @@ Without AI_PROXY_TARGET the rule is not added, so sites without URL Rewrite keep
 
 Without a proxy, the browser calls VITE_AI_API_URL directly: use an HTTPS address that users' browsers can reach (not localhost) and allow the site origin in the AI server's CORS settings.
 
+### PHP backend (api/chat.php)
+
+This is the default. Every build includes a small backend at api/chat.php. The browser posts to it on the same site (no CORS), and PHP calls the AI server with the model and API key kept on the server.
+
+    https://your-site/api/chat.php  →  PHP (server)  →  AI server
+
+1. On the IIS server, install PHP with FastCGI (for example with the PHP Manager for IIS) and enable the curl and openssl extensions in php.ini. If the AI server uses HTTPS, point curl.cainfo and openssl.cafile in php.ini to a CA bundle (cacert.pem, plus your company CA if it issues the AI server's certificate).
+2. Run npm run build (no .env needed) and copy the contents of dist/ to the site.
+3. Open https://your-site/api/chat.php in a browser. {"error":"Method not allowed"} means PHP is running; a download or PHP source means .php is not mapped to PHP in IIS.
+4. On the server, copy api/config.example.php to api/config.php and set provider (ollama or openai), base_url, model, and api_key. Environment variables AI_PROVIDER, AI_BASE_URL, AI_MODEL, AI_API_KEY, AI_TIMEOUT, and AI_ALLOWED_ORIGINS override the file. web.config blocks downloading config.php, and git ignores public/api/config.php.
+5. Check that the IIS server itself can reach base_url (curl or Postman on that machine), then translate in the app.
+
+api/chat.php accepts only POST with up to four system/user messages, always uses the model from its config, and returns { content } or { error } using the same error messages as the app. When copying a new build, keep the existing api/config.php on the server.
+
 Translation prompts for each mode and direction, the company glossary, and protected terms are built in services/aiClient.js. The service keeps the same response contract as the mock, so the UI does not change.
 
 ## Validation
@@ -99,7 +116,7 @@ node tests/layout.mjs
 
 npm test always uses the mock service. Browser suites expect deterministic mock output: run **npm run dev:mock** (uses .env.mock) on port 3001 instead of npm run dev. Browser and language suites accept BASE_URL for another address.
 
-Run the build before test:static, with VITE_AI_PROVIDER=mock or no AI configuration. It serves dist/ through a plain static HTTP server and verifies root/subfolder hosting without SPA rewrites, local fonts, and no external requests.
+Run npx vite build --mode mock before test:static. It serves dist/ through a plain static HTTP server and verifies root/subfolder hosting without SPA rewrites, local fonts, and no external requests.
 
 ## Structure
 
@@ -110,6 +127,7 @@ Run the build before test:static, with VITE_AI_PROVIDER=mock or no AI configurat
 - data/: fixtures, terminology, and Thai/English interface wording.
 - utils/: safe localStorage, clipboard, and class merging.
 - iis/web.config: IIS configuration template; scripts/webConfig.js writes dist/web.config and adds the optional AI proxy rule.
+- public/api/chat.php: PHP backend used by default, copied into dist/api/; public/api/config.example.php documents its settings.
 - tests/: service, browser, localization, layout, and static deployment checks.
 
 ## Interface and mock behavior

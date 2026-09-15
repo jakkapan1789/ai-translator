@@ -3,12 +3,14 @@ import { protectedTerms, terminology } from "../data/terminology.js";
 const readNumber = value => value === undefined || value === "" ? NaN : Number(value);
 
 // Empty or invalid values fall back to defaults; the seed is only sent when it is a whole number.
+// Without settings the app uses the PHP backend at ./api/chat.php, so production builds need no .env file.
 export function parseAiConfig(env = {}) {
   const temperature = readNumber(env.VITE_AI_TEMPERATURE);
   const seed = readNumber(env.VITE_AI_SEED);
+  const provider = (env.VITE_AI_PROVIDER || "backend").toLowerCase();
   return {
-    provider: (env.VITE_AI_PROVIDER || "mock").toLowerCase(),
-    apiUrl: (env.VITE_AI_API_URL || "").replace(/\/+$/, ""),
+    provider,
+    apiUrl: (env.VITE_AI_API_URL || (provider === "backend" ? "./api/chat.php" : "")).replace(/\/+$/, ""),
     model: env.VITE_AI_MODEL || "",
     apiKey: env.VITE_AI_API_KEY || "",
     timeoutMs: Number(env.VITE_AI_TIMEOUT_MS) || 60000,
@@ -16,8 +18,11 @@ export function parseAiConfig(env = {}) {
     seed: Number.isInteger(seed) ? seed : undefined,
   };
 }
-export const aiConfig = parseAiConfig(import.meta.env || {});
-export const usesLiveAi = aiConfig.provider !== "mock" && !!aiConfig.apiUrl && !!aiConfig.model;
+// import.meta.env only exists in Vite; plain Node (npm test) uses the mock service.
+export const aiConfig = parseAiConfig(import.meta.env || { VITE_AI_PROVIDER: "mock" });
+// "backend" needs no model in the browser: api/chat.php picks the model on the server.
+export const isLiveAi = config => config.provider !== "mock" && !!config.apiUrl && (config.provider === "backend" || !!config.model);
+export const usesLiveAi = isLiveAi(aiConfig);
 
 const languageNames = { th: "Thai", en: "English" };
 
@@ -119,26 +124,31 @@ export function hasUnexpectedScript(output, targetLanguage, source = "") {
 
 async function chat(system, user, cleanOptions, temperature = aiConfig.temperature) {
   const ollama = aiConfig.provider === "ollama";
+  // "backend" posts to our own PHP endpoint (api/chat.php), which adds the model and API key on the server.
+  const backend = aiConfig.provider === "backend";
   const messages = [{ role: "system", content: system }, { role: "user", content: user }];
   const headers = { "Content-Type": "application/json" };
-  if (aiConfig.apiKey) headers.Authorization = "Bearer " + aiConfig.apiKey;
+  if (aiConfig.apiKey && !backend) headers.Authorization = "Bearer " + aiConfig.apiKey;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), aiConfig.timeoutMs);
   try {
-    const response = await fetch(aiConfig.apiUrl + (ollama ? "/api/chat" : "/chat/completions"), {
-      method: "POST",
-      headers,
-      body: JSON.stringify(ollama
+    const url = backend ? aiConfig.apiUrl : aiConfig.apiUrl + (ollama ? "/api/chat" : "/chat/completions");
+    const body = backend
+      ? { messages, temperature, seed: aiConfig.seed }
+      : ollama
         ? { model: aiConfig.model, messages, stream: false, options: { temperature, seed: aiConfig.seed } }
-        : { model: aiConfig.model, messages, temperature, seed: aiConfig.seed }),
-      signal: controller.signal,
-    });
+        : { model: aiConfig.model, messages, temperature, seed: aiConfig.seed };
+    const response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: controller.signal });
+    if (backend && !response.ok) {
+      const failure = await response.json().catch(() => ({}));
+      throw new Error(typeof failure.error === "string" ? failure.error : "Unable to connect to AI server");
+    }
     if (response.status === 404) throw new Error("AI model or endpoint not found");
     if (response.status === 401 || response.status === 403) throw new Error("AI server rejected the API key");
     if (response.status === 429) throw new Error("AI server is busy. Try again shortly.");
     if (!response.ok) throw new Error("Unable to connect to AI server");
     const data = await response.json();
-    const content = ollama ? data?.message?.content : data?.choices?.[0]?.message?.content;
+    const content = backend ? data?.content : ollama ? data?.message?.content : data?.choices?.[0]?.message?.content;
     const cleaned = typeof content === "string" ? cleanOutput(content, cleanOptions) : "";
     if (!cleaned) throw new Error("Unexpected response from AI server");
     return cleaned;

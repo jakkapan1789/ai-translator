@@ -16,12 +16,12 @@ This is a React 19 single-page app built with Vite (not Next.js).
 
 ## AI Configuration
 
-AI settings come from `VITE_AI_PROVIDER` (`mock`, `ollama`, `openai`), `VITE_AI_API_URL`, `VITE_AI_MODEL`, `VITE_AI_API_KEY`, `VITE_AI_TIMEOUT_MS`, `VITE_AI_TEMPERATURE` (default 0.2), and `VITE_AI_SEED` (optional integer) in `.env.local` (ignored by git; template in `.env.example`). `VITE_` values are compiled into the bundle and visible in the browser, so never treat them as secret. `.env.mock` forces the mock for tests. For HTTPS deployments set `VITE_AI_API_URL=./ai` and `AI_PROXY_TARGET` (not exposed to the browser): the build adds an IIS URL Rewrite + ARR proxy rule to `dist/web.config`, and the dev/preview servers proxy `/ai` the same way.
+By default the frontend posts to the PHP backend at `./api/chat.php`, and the AI server, model, and key live in `api/config.php` on the server, so production builds need no `.env`. Optional overrides are `VITE_AI_PROVIDER` (`backend` default, `mock`, `ollama`, `openai`), `VITE_AI_API_URL`, `VITE_AI_MODEL`, `VITE_AI_API_KEY`, `VITE_AI_TIMEOUT_MS`, `VITE_AI_TEMPERATURE` (default 0.2), and `VITE_AI_SEED` (optional integer); put local ones in `.env.development.local` (dev only, ignored by git; template in `.env.example`) so builds are unaffected. `VITE_` values are compiled into the bundle and visible in the browser, so never treat them as secret. `.env.mock` forces the mock for tests. For HTTPS deployments set `VITE_AI_API_URL=./ai` and `AI_PROXY_TARGET` (not exposed to the browser): the build adds an IIS URL Rewrite + ARR proxy rule to `dist/web.config`, and the dev/preview servers proxy `/ai` the same way. Alternatively, `VITE_AI_PROVIDER=backend` with `VITE_AI_API_URL=./api/chat.php` uses the PHP backend in `public/api/chat.php`, configured on the server through `api/config.php` (git-ignored) or `AI_*` environment variables.
 
 ## Build, Test, and Development Commands
 
 - `npm install`: install dependencies.
-- `npm run dev`: run the Vite dev server on port 3001 (fixed via `strictPort` in `vite.config.js`) using `.env.local`.
+- `npm run dev`: run the Vite dev server on port 3001 (fixed via `strictPort` in `vite.config.js`) using `.env.development.local` when present (otherwise it calls `./api/chat.php`, which Vite does not serve).
 - `npm run dev:mock`: run the dev server with the mock service; use this for browser tests.
 - `npm run build`: create the production build in `dist/` with Vite. Kanit fonts are bundled from `@fontsource/kanit`, so no network access is needed.
 - `npm start` (or `npm run preview`): serve the production build on port 3001.

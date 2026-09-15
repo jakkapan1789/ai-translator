@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { buildWebConfig, normalizeProxyTarget } from "../scripts/webConfig.js";
 import { translateText, transformText } from "../services/translatorService.js";
 import { mockTranslations } from "../data/mockTranslations.js";
-import { cleanOutput, hasUnexpectedScript, missingTerms, parseAiConfig } from "../services/aiClient.js";
+import { cleanOutput, hasUnexpectedScript, isLiveAi, missingTerms, parseAiConfig } from "../services/aiClient.js";
 test("known translations, mode formatting, and protected terms", async () => {
  for (const item of mockTranslations) {
   const response = await translateText({ text: item.source, mode: "manufacturing" });
@@ -58,7 +58,8 @@ test("AI output cleanup", () => {
  assert.deepEqual(missingTerms("ตรวจสอบเลขล็อต", ""), []);});
 test("AI config parsing", () => {
  const defaults = parseAiConfig({});
- assert.equal(defaults.provider, "mock");
+ assert.equal(defaults.provider, "backend");
+ assert.equal(defaults.apiUrl, "./api/chat.php");
  assert.equal(defaults.temperature, 0.2);
  assert.equal(defaults.seed, undefined);
  assert.equal(defaults.timeoutMs, 60000);
@@ -73,12 +74,18 @@ test("AI config parsing", () => {
  const outOfRange = parseAiConfig({ VITE_AI_TEMPERATURE: "3", VITE_AI_SEED: "" });
  assert.equal(outOfRange.temperature, 0.2);
  assert.equal(outOfRange.seed, undefined);
+ assert.equal(isLiveAi(parseAiConfig({ VITE_AI_PROVIDER: "backend", VITE_AI_API_URL: "./api/chat.php" })), true);
+ assert.equal(isLiveAi(parseAiConfig({ VITE_AI_PROVIDER: "ollama", VITE_AI_API_URL: "http://localhost:11434" })), false);
+ assert.equal(isLiveAi(parseAiConfig({})), true);
+ assert.equal(isLiveAi(parseAiConfig({ VITE_AI_PROVIDER: "mock" })), false);
+ assert.equal(parseAiConfig({ VITE_AI_PROVIDER: "ollama" }).apiUrl, "");
 });
 test("IIS web.config proxy rule", () => {
  const template = readFileSync(new URL("../iis/web.config", import.meta.url), "utf8");
  const plain = buildWebConfig(template);
  assert.ok(!plain.includes("AI_PROXY_RULE") && !plain.includes("<rewrite>"));
  assert.ok(plain.includes('<add value="index.html" />'));
+ assert.ok(plain.includes('<add segment="config.php" />'));
  const proxied = buildWebConfig(template, { target: "https://ai.company.local/v1/" });
  assert.ok(proxied.includes('<match url="^ai/(.*)" />'));
  assert.ok(proxied.includes('<action type="Rewrite" url="https://ai.company.local/v1/{R:1}" />'));

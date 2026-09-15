@@ -5,3 +5,4 @@ node_modules/
 test-results/
 playwright-report/
 dist/
+public/api/config.php
