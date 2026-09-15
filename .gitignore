@@ -6,3 +6,4 @@ test-results/
 playwright-report/
 dist/
 public/api/config.php
+public/api/chat.config.json

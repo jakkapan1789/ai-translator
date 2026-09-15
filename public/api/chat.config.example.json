@@ -1,0 +1,9 @@
+{
+  "_help": "Settings for chat.ashx (ASP.NET). Copy this file to chat.config.json in the same api folder and fill in. provider: ollama or openai. base_url: Ollama server root (http://host:11434) or OpenAI-compatible URL including /v1. api_key stays on the server. allowed_origins is only needed when a page on another domain calls chat.ashx. AI_* environment variables override these values. chat.config.json is ignored by git and blocked from download by web.config.",
+  "provider": "openai",
+  "base_url": "https://ai.company.local/v1",
+  "model": "model-name",
+  "api_key": "",
+  "timeout": 60,
+  "allowed_origins": []
+}

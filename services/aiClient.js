@@ -8,9 +8,14 @@ export function parseAiConfig(env = {}) {
   const temperature = readNumber(env.VITE_AI_TEMPERATURE);
   const seed = readNumber(env.VITE_AI_SEED);
   const provider = (env.VITE_AI_PROVIDER || "backend").toLowerCase();
+  // Without VITE_AI_API_URL the backend tries PHP first, then the ASP.NET handler.
+  const apiUrls = env.VITE_AI_API_URL
+    ? [env.VITE_AI_API_URL.replace(/\/+$/, "")]
+    : provider === "backend" ? ["./api/chat.php", "./api/chat.ashx"] : [];
   return {
     provider,
-    apiUrl: (env.VITE_AI_API_URL || (provider === "backend" ? "./api/chat.php" : "")).replace(/\/+$/, ""),
+    apiUrl: apiUrls[0] || "",
+    apiUrls,
     model: env.VITE_AI_MODEL || "",
     apiKey: env.VITE_AI_API_KEY || "",
     timeoutMs: Number(env.VITE_AI_TIMEOUT_MS) || 60000,
@@ -122,6 +127,25 @@ export function hasUnexpectedScript(output, targetLanguage, source = "") {
   return false;
 }
 
+// The backend file that answered last (chat.php or chat.ashx), so later requests skip the failed one.
+let backendUrl = null;
+
+// Tries each backend file in order. 404/405 means that file or its handler is not installed on this server.
+export async function postToBackend(request, urls = aiConfig.apiUrls, fetchImpl = fetch) {
+  const candidates = backendUrl && urls.includes(backendUrl) ? [backendUrl] : urls;
+  let response;
+  for (const [index, url] of candidates.entries()) {
+    response = await fetchImpl(url, request);
+    const missing = response.status === 404 || response.status === 405;
+    if (!missing) {
+      backendUrl = url;
+      return response;
+    }
+    if (index === candidates.length - 1) break;
+  }
+  return response;
+}
+
 async function chat(system, user, cleanOptions, temperature = aiConfig.temperature) {
   const ollama = aiConfig.provider === "ollama";
   // "backend" posts to our own PHP endpoint (api/chat.php), which adds the model and API key on the server.
@@ -132,16 +156,19 @@ async function chat(system, user, cleanOptions, temperature = aiConfig.temperatu
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), aiConfig.timeoutMs);
   try {
-    const url = backend ? aiConfig.apiUrl : aiConfig.apiUrl + (ollama ? "/api/chat" : "/chat/completions");
     const body = backend
       ? { messages, temperature, seed: aiConfig.seed }
       : ollama
         ? { model: aiConfig.model, messages, stream: false, options: { temperature, seed: aiConfig.seed } }
         : { model: aiConfig.model, messages, temperature, seed: aiConfig.seed };
-    const response = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: controller.signal });
+    const request = { method: "POST", headers, body: JSON.stringify(body), signal: controller.signal };
+    const response = backend
+      ? await postToBackend(request)
+      : await fetch(aiConfig.apiUrl + (ollama ? "/api/chat" : "/chat/completions"), request);
     if (backend && !response.ok) {
       const failure = await response.json().catch(() => ({}));
-      throw new Error(typeof failure.error === "string" ? failure.error : "Unable to connect to AI server");
+      const missing = response.status === 404 || response.status === 405;
+      throw new Error(typeof failure.error === "string" ? failure.error : missing ? "AI backend is not configured" : "Unable to connect to AI server");
     }
     if (response.status === 404) throw new Error("AI model or endpoint not found");
     if (response.status === 401 || response.status === 403) throw new Error("AI server rejected the API key");

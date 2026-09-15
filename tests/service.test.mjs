@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { buildWebConfig, normalizeProxyTarget } from "../scripts/webConfig.js";
 import { translateText, transformText } from "../services/translatorService.js";
 import { mockTranslations } from "../data/mockTranslations.js";
-import { cleanOutput, hasUnexpectedScript, isLiveAi, missingTerms, parseAiConfig } from "../services/aiClient.js";
+import { cleanOutput, hasUnexpectedScript, isLiveAi, missingTerms, parseAiConfig, postToBackend } from "../services/aiClient.js";
 test("known translations, mode formatting, and protected terms", async () => {
  for (const item of mockTranslations) {
   const response = await translateText({ text: item.source, mode: "manufacturing" });
@@ -60,6 +60,8 @@ test("AI config parsing", () => {
  const defaults = parseAiConfig({});
  assert.equal(defaults.provider, "backend");
  assert.equal(defaults.apiUrl, "./api/chat.php");
+ assert.deepEqual(defaults.apiUrls, ["./api/chat.php", "./api/chat.ashx"]);
+ assert.deepEqual(parseAiConfig({ VITE_AI_API_URL: "./api/chat.ashx/" }).apiUrls, ["./api/chat.ashx"]);
  assert.equal(defaults.temperature, 0.2);
  assert.equal(defaults.seed, undefined);
  assert.equal(defaults.timeoutMs, 60000);
@@ -80,12 +82,32 @@ test("AI config parsing", () => {
  assert.equal(isLiveAi(parseAiConfig({ VITE_AI_PROVIDER: "mock" })), false);
  assert.equal(parseAiConfig({ VITE_AI_PROVIDER: "ollama" }).apiUrl, "");
 });
+test("backend falls back from chat.php to chat.ashx", async () => {
+ const urls = ["./api/chat.php", "./api/chat.ashx"];
+ const calls = [];
+ const fakeFetch = status => async url => { calls.push(url); return { status: url === "./api/chat.ashx" ? 200 : status, ok: url === "./api/chat.ashx" }; };
+ const first = await postToBackend({}, urls, fakeFetch(404));
+ assert.equal(first.status, 200);
+ assert.deepEqual(calls, ["./api/chat.php", "./api/chat.ashx"]);
+ calls.length = 0;
+ await postToBackend({}, urls, fakeFetch(404));
+ assert.deepEqual(calls, ["./api/chat.ashx"], "remembers the working backend");
+ calls.length = 0;
+ const serverError = await postToBackend({}, ["./x.php", "./x.ashx"], async url => { calls.push(url); return { status: 500, ok: false }; });
+ assert.equal(serverError.status, 500);
+ assert.deepEqual(calls, ["./x.php"], "a real error from the first backend is returned, not skipped");
+ calls.length = 0;
+ const missing = await postToBackend({}, ["./y.php", "./y.ashx"], async url => { calls.push(url); return { status: url.endsWith(".php") ? 404 : 405, ok: false }; });
+ assert.equal(missing.status, 405);
+ assert.deepEqual(calls, ["./y.php", "./y.ashx"]);
+});
 test("IIS web.config proxy rule", () => {
  const template = readFileSync(new URL("../iis/web.config", import.meta.url), "utf8");
  const plain = buildWebConfig(template);
  assert.ok(!plain.includes("AI_PROXY_RULE") && !plain.includes("<rewrite>"));
  assert.ok(plain.includes('<add value="index.html" />'));
  assert.ok(plain.includes('<add segment="config.php" />'));
+ assert.ok(plain.includes('<add segment="chat.config.json" />'));
  const proxied = buildWebConfig(template, { target: "https://ai.company.local/v1/" });
  assert.ok(proxied.includes('<match url="^ai/(.*)" />'));
  assert.ok(proxied.includes('<action type="Rewrite" url="https://ai.company.local/v1/{R:1}" />'));

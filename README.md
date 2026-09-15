@@ -107,6 +107,16 @@ This is the default. Every build includes a small backend at api/chat.php. The b
 
 Always use the host name the certificate was issued for in base_url, not an IP address. To troubleshoot, copy tools/diagnose.php next to chat.php, open it in a browser, and delete it afterwards: it shows the PHP extensions, effective settings (without the key), which CAs are trusted, and the exact curl error for the AI server.
 
+### ASP.NET backend (api/chat.ashx)
+
+For IIS servers without PHP, or when PHP cannot trust the internal CA, every build also includes api/chat.ashx. It has the same request and response contract as chat.php, and .NET uses the Windows certificate store and system proxy automatically, so internal company CAs need no extra settings.
+
+1. Enable the IIS feature ASP.NET 4.x (Server Manager → Web Server → Application Development → ASP.NET 4.x). No other install is needed; the handler is compiled by IIS on first request.
+2. Copy api/chat.config.example.json to **api/chat.config.json** and set provider, base_url, model, and api_key. AI_* environment variables override the file. web.config blocks downloading chat.config.json, and git ignores it.
+3. Open https://your-site/api/chat.ashx in a browser: {"error":"Method not allowed"} means ASP.NET is running.
+
+The app needs no rebuild: without VITE_AI_API_URL it posts to api/chat.php, and if that returns 404 or 405 (no PHP handler, or the file was removed) it uses api/chat.ashx and remembers it. To use chat.ashx on a server that also runs PHP, delete api/chat.php there.
+
 api/chat.php accepts only POST with up to four system/user messages, always uses the model from its config, and returns { content } or { error } using the same error messages as the app. When copying a new build, keep the existing api/config.php on the server.
 
 Translation prompts for each mode and direction, the company glossary, and protected terms are built in services/aiClient.js. The service keeps the same response contract as the mock, so the UI does not change.
@@ -136,6 +146,7 @@ Run npx vite build --mode mock before test:static. It serves dist/ through a pla
 - utils/: safe localStorage, clipboard, and class merging.
 - iis/web.config: IIS configuration template; scripts/webConfig.js writes dist/web.config and adds the optional AI proxy rule.
 - public/api/chat.php: PHP backend used by default, copied into dist/api/; public/api/config.example.php documents its settings.
+- public/api/chat.ashx: ASP.NET alternative with the same contract, configured by api/chat.config.json (see chat.config.example.json); the app falls back to it when chat.php returns 404/405.
 - tests/: service, browser, localization, layout, and static deployment checks.
 
 ## Interface and mock behavior
